@@ -19,7 +19,7 @@
 9. [Pivoting nivel 3](#-pivoting-nivel-3)
 10. [Máquina 4 — `trust`](#-máquina-4--trust-4040403)
 11. [Pivoting nivel 4](#-pivoting-nivel-4)
-12. [Máquina 5 — `move`](#-máquina-5--move-5050503-objetivo-final)
+12. [Máquina 5 — `move` (objetivo final)](#-máquina-5--move-5050503-objetivo-final)
 13. [Credenciales recopiladas](#-credenciales-recopiladas)
 14. [Remediación](#-remediación)
 
@@ -373,7 +373,9 @@ proxychains4 -f /tmp/pc4.conf curl http://50.50.50.3/    # ✅ máquina final
 
 ---
 
-## 🖥️ Máquina 5 — `move` (50.50.50.3) · 🏁 OBJETIVO FINAL
+## 🖥️ Máquina 5 — `move` (50.50.50.3, objetivo final)
+
+**🏁 OBJETIVO FINAL**
 
 ### Acceso
 
@@ -433,10 +435,10 @@ freddy$ sudo /usr/bin/python3 /opt/maintenance.py
 ## 🔑 Credenciales recopiladas
 
 | Máquina             | Usuario | Contraseña               | Origen                                    |
-|---------------------|---------|--------------------------|-------------------------------------------|
+|---------------------|---------|---------------------------|-------------------------------------------|
 | `whereismywebshell` | www-data| —                        | RCE vía webshell (`shell.php?parameter=`) |
 | `inclusion`         | manchi  | `lovely`                 | Fuerza bruta SSH / `yescrypt`             |
-| `inclusion`         | seller  | `qwerty`                 | Fuerza bruta `su` / `yescrypt`            |
+| `inclusion`         | seller  | `qwerty`                 | Fuerza bruta `su` / `yescrypt`             |
 | `trust`             | mario   | `chocolate`              | Fuerza bruta SSH / `yescrypt`             |
 | `move`              | freddy  | `t9sH76gpQ82UFeZ3GXZS`   | LFI no autenticado en Grafana 8.3.0 (CVE-2021-43798) sobre `/tmp/pass.txt` |
 
@@ -451,8 +453,8 @@ freddy$ sudo /usr/bin/python3 /opt/maintenance.py
 - `move`: actualizar Grafana a una versión parcheada (≥ 8.3.1 / 8.2.7 / 8.1.8 / 8.0.7) — CVE-2021-43798 permite lectura de fichero arbitraria sin autenticación. No exponer Grafana sin autenticación ni en la misma red que secretos en texto claro.
 
 **Sistema / privilegios**
-- Reglas `sudo` peligrosas: `env`, `php`, `vim`, `python3` sobre un script escribible son escaladas triviales (ver [GTFOBins](https://gtfobins.github.io)). Restringir a binarios/argumentos concretos y no editables por el usuario.
-- `move`: un script ejecutado por `sudo` **jamás** debe pertenecer al usuario que lo invoca (permiso de escritura = root instantáneo). Debe ser `root:root` y `644`.
+- Reglas `sudo` peligrosas sin restricción de argumentos: permitir `env`, `php` o `vim` vía `sudo` habilita una escalada trivial (ver [GTFOBins](https://gtfobins.github.io)). Restringir siempre a binarios/argumentos concretos.
+- `move`: aunque el `sudo` de freddy estaba restringido a un único script (`python3 /opt/maintenance.py`), el fichero era propiedad de ese mismo usuario y por tanto escribible por él — permiso de escritura sobre un script ejecutado como root equivale a root instantáneo. Debe pertenecer a `root:root` con modo `644`.
 - Contraseñas: prohibir entradas de diccionario (`rockyou`) y no dejar secretos en `/tmp` ni en FTP anónimo.
 
 **Segmentación / red**
